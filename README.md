@@ -6,7 +6,7 @@ Convert images and video to audio using sonification.
 
 - **Real-time sync**: Video audio matches video duration exactly
 - **Auto-scaling**: Analyzes brightness range for optimal dynamics
-- **Auto-versioning**: Output files as `YYMMDD/YYMMDD_<filename>_v001.wav`
+- **Auto-versioning**: Output files as `YYMMDD/YYMMDD_<filename>_<mode>_v001.wav`
 - **Progress bar**: Visual feedback during video rendering
 - **Three modes**: Scanline, Spectral, and Additive synthesis
 
@@ -23,7 +23,7 @@ pip install -e .
 
 ### Scanline
 Direct spatial mapping. Each column = moment in time, brightness = amplitude.
-Best for: glitchy, raw, waveform-like sounds.
+Best for: glitchy, raw, waveform-like sounds. Now with bass boost and filtering!
 
 ### Spectral
 Treats image as spectrogram. Y = frequency, X = time, brightness = magnitude.
@@ -39,25 +39,26 @@ Each image row = a sine oscillator. Most direct visual-to-audio mapping.
 ## Usage
 
 ```bash
-# Additive - best visual sync
-img2sound additive video.mp4
-img2sound additive artwork.png --duration 10
+# Scanline with bass boost
+img2sound scanline video.mp4 --bass-boost 2.0
+img2sound scanline video.mp4 --bass-boost 2.5 --lowpass 4000
 
-# Spectral - rich textures with bass
+# Spectral - rich textures
 img2sound spectral video.mp4
 img2sound spectral photo.jpg --bass-boost 3.0
 
-# Scanline - raw/glitchy
-img2sound scanline video.mp4
-img2sound scanline image.png --channel-mode stereo
+# Additive - best visual sync
+img2sound additive video.mp4
+img2sound additive artwork.png --duration 10
 ```
 
 ## Output
 
-Files auto-version to prevent overwrites:
+Files auto-version with mode name:
 ```
-260128/260128_video_v001.wav
-260128/260128_video_v002.wav
+260129/260129_video_scanline_v001.wav
+260129/260129_video_spectral_v001.wav
+260129/260129_video_additive_v001.wav
 ```
 
 Progress bar shows during video processing:
@@ -74,6 +75,17 @@ Progress bar shows during video processing:
 | `--sample-rate` | 44100 | Sample rate Hz |
 | `--bit-depth` | 16 | 16 or 32 bit |
 | `-v, --verbose` | off | Show details |
+
+### Scanline
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--direction` | horizontal | horizontal or vertical |
+| `--channel-mode` | mono | mono, stereo, rgb |
+| `--invert` | off | Dark = loud |
+| `--bass-boost` | 1.0 | Bass boost (1.0 = none, 2.0 = double) |
+| `--lowpass` | none | Lowpass filter cutoff Hz |
+| `--highpass` | none | Highpass filter cutoff Hz |
+| `--smooth` | 0 | Smoothing (0 = off, try 3-11) |
 
 ### Spectral
 | Option | Default | Description |
@@ -92,12 +104,21 @@ Progress bar shows during video processing:
 | `--oscillators` | 64 | Number of sine oscillators |
 | `--log-freq` | on | Logarithmic frequency scale |
 
-### Scanline
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--direction` | horizontal | horizontal or vertical |
-| `--channel-mode` | mono | mono, stereo, rgb |
-| `--invert` | off | Dark = loud |
+## Examples
+
+```bash
+# Scanline with warm bass
+img2sound scanline video.mp4 --bass-boost 2.5 --lowpass 6000
+
+# Remove harsh highs, boost bass
+img2sound scanline video.mp4 --lowpass 4000 --bass-boost 2.0 --smooth 5
+
+# Spectral with extra bass
+img2sound spectral video.mp4 --bass-boost 3.5 --freq-min 20
+
+# Musical additive range (A1 to A5)
+img2sound additive video.mp4 --freq-min 55 --freq-max 880
+```
 
 ## Supported Formats
 

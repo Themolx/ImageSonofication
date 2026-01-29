@@ -102,6 +102,121 @@ def resample_audio(audio: np.ndarray, target_length: int) -> np.ndarray:
         return resampled
 
 
+def apply_bass_boost(audio: np.ndarray, sample_rate: int, boost: float = 2.0, cutoff: int = 200) -> np.ndarray:
+    """
+    Apply bass boost by amplifying low frequencies.
+
+    Args:
+        audio: Audio samples
+        sample_rate: Sample rate in Hz
+        boost: Boost factor (1.0 = no boost, 2.0 = double bass)
+        cutoff: Frequency below which to boost (Hz)
+
+    Returns:
+        Bass-boosted audio
+    """
+    if boost <= 1.0:
+        return audio
+
+    # Design lowpass filter to extract bass
+    nyquist = sample_rate / 2
+    normalized_cutoff = min(cutoff / nyquist, 0.99)
+
+    b, a = signal.butter(2, normalized_cutoff, btype='low')
+
+    # Handle mono vs stereo
+    if audio.ndim == 1:
+        bass = signal.filtfilt(b, a, audio)
+        return audio + bass * (boost - 1.0)
+    else:
+        result = audio.copy()
+        for ch in range(audio.shape[1]):
+            bass = signal.filtfilt(b, a, audio[:, ch])
+            result[:, ch] = audio[:, ch] + bass * (boost - 1.0)
+        return result
+
+
+def apply_lowpass(audio: np.ndarray, sample_rate: int, cutoff: int) -> np.ndarray:
+    """
+    Apply lowpass filter.
+
+    Args:
+        audio: Audio samples
+        sample_rate: Sample rate in Hz
+        cutoff: Cutoff frequency in Hz
+
+    Returns:
+        Filtered audio
+    """
+    nyquist = sample_rate / 2
+    normalized_cutoff = min(cutoff / nyquist, 0.99)
+
+    b, a = signal.butter(4, normalized_cutoff, btype='low')
+
+    if audio.ndim == 1:
+        return signal.filtfilt(b, a, audio).astype(np.float32)
+    else:
+        result = np.zeros_like(audio)
+        for ch in range(audio.shape[1]):
+            result[:, ch] = signal.filtfilt(b, a, audio[:, ch])
+        return result.astype(np.float32)
+
+
+def apply_highpass(audio: np.ndarray, sample_rate: int, cutoff: int) -> np.ndarray:
+    """
+    Apply highpass filter.
+
+    Args:
+        audio: Audio samples
+        sample_rate: Sample rate in Hz
+        cutoff: Cutoff frequency in Hz
+
+    Returns:
+        Filtered audio
+    """
+    nyquist = sample_rate / 2
+    normalized_cutoff = max(cutoff / nyquist, 0.01)
+
+    b, a = signal.butter(4, normalized_cutoff, btype='high')
+
+    if audio.ndim == 1:
+        return signal.filtfilt(b, a, audio).astype(np.float32)
+    else:
+        result = np.zeros_like(audio)
+        for ch in range(audio.shape[1]):
+            result[:, ch] = signal.filtfilt(b, a, audio[:, ch])
+        return result.astype(np.float32)
+
+
+def apply_smooth(audio: np.ndarray, window_size: int = 5) -> np.ndarray:
+    """
+    Smooth audio to reduce harshness.
+
+    Args:
+        audio: Audio samples
+        window_size: Smoothing window size (odd number)
+
+    Returns:
+        Smoothed audio
+    """
+    if window_size <= 1:
+        return audio
+
+    # Ensure odd window size
+    if window_size % 2 == 0:
+        window_size += 1
+
+    kernel = np.ones(window_size) / window_size
+
+    if audio.ndim == 1:
+        return np.convolve(audio, kernel, mode='same').astype(np.float32)
+    else:
+        result = np.zeros_like(audio)
+        for ch in range(audio.shape[1]):
+            result[:, ch] = np.convolve(audio[:, ch], kernel, mode='same')
+        return result.astype(np.float32)
+
+
 def crossfade_concatenate(chunks: list, crossfade_samples: int = 64) -> np.ndarray:
     """
     Concatenate audio chunks with crossfade to avoid clicks.

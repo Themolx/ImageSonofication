@@ -1,6 +1,8 @@
 """Common utilities and constants."""
 
 import re
+import fcntl
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -93,6 +95,7 @@ def generate_output_path(input_path: str, mode: str = None, output_dir: str = No
 
     Creates paths like: YYMMDD/YYMMDD_<filename>_<mode>_v001.wav
     Auto-increments version number if file exists.
+    Uses file locking to prevent race conditions when running multiple instances.
 
     Args:
         input_path: Path to input file (used to extract base name)
@@ -125,17 +128,72 @@ def generate_output_path(input_path: str, mode: str = None, output_dir: str = No
     else:
         name_base = f"{date_str}_{base_name}"
 
-    # Find next version number
-    version = 1
-    pattern = re.compile(rf"^{re.escape(name_base)}_v(\d{{3}}){re.escape(extension)}$")
+    # Use a lock file to prevent race conditions when running multiple instances
+    lock_file = date_folder / ".img2sound.lock"
 
-    for existing_file in date_folder.iterdir():
-        match = pattern.match(existing_file.name)
-        if match:
-            existing_version = int(match.group(1))
-            version = max(version, existing_version + 1)
+    with open(lock_file, "w") as lf:
+        # Acquire exclusive lock (blocks until available)
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
 
-    # Generate filename
-    filename = f"{name_base}_v{version:03d}{extension}"
+        try:
+            # Find next version number by checking both .wav and .nfo files
+            version = 1
+            # Match any extension to catch all versioned files (wav, nfo, etc.)
+            pattern = re.compile(rf"^{re.escape(name_base)}_v(\d{{3}})\.[a-zA-Z0-9]+$")
 
-    return date_folder / filename
+            for existing_file in date_folder.iterdir():
+                # Skip directories and lock file
+                if not existing_file.is_file() or existing_file.name.startswith("."):
+                    continue
+                match = pattern.match(existing_file.name)
+                if match:
+                    existing_version = int(match.group(1))
+                    version = max(version, existing_version + 1)
+
+            # Generate filename
+            filename = f"{name_base}_v{version:03d}{extension}"
+            output_path = date_folder / filename
+
+            # Create a placeholder file to reserve this version number
+            output_path.touch()
+
+        finally:
+            # Release lock
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+
+    return output_path
+
+
+def write_nfo(wav_path: str, settings: dict) -> Path:
+    """
+    Write NFO file with render settings alongside WAV file.
+
+    Args:
+        wav_path: Path to the WAV file
+        settings: Dictionary of settings used for the render
+
+    Returns:
+        Path to the NFO file
+    """
+    wav_path = Path(wav_path)
+    nfo_path = wav_path.with_suffix(".nfo")
+
+    lines = [
+        f"img2sound render settings",
+        f"========================",
+        f"",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"",
+    ]
+
+    # Add all settings
+    for key, value in settings.items():
+        if value is not None:
+            # Format the key nicely
+            display_key = key.replace("_", " ").title()
+            lines.append(f"{display_key}: {value}")
+
+    # Write the file
+    nfo_path.write_text("\n".join(lines))
+
+    return nfo_path

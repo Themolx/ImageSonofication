@@ -5,13 +5,13 @@ import click
 from pathlib import Path
 
 from img2sound import __version__
-from img2sound.core.scanline import scanline_image, scanline_video
+from img2sound.core.scanline import scanline_image, scanline_video, process_scanline_audio
 from img2sound.core.spectral import spectral_image, spectral_video
 from img2sound.core.additive import additive_image, additive_video
 from img2sound.core.audio import normalize_audio, write_wav, resample_audio
 from img2sound.io.image import load_image, validate_image
 from img2sound.io.video import get_video_info
-from img2sound.utils.helpers import get_input_type, format_duration, generate_output_path, Img2SoundError
+from img2sound.utils.helpers import get_input_type, format_duration, generate_output_path, write_nfo, Img2SoundError
 
 
 class ProgressBar:
@@ -56,7 +56,8 @@ def cli():
     spectral  - Treat image as spectrogram, reconstruct via inverse FFT
     additive  - Each image row = sine oscillator (best visual sync)
 
-    Output files are auto-versioned: YYMMDD/YYMMDD_<filename>_v001.wav
+    Output files are auto-versioned: YYMMDD/YYMMDD_<filename>_<mode>_v001.wav
+    Settings saved to matching .nfo file.
     """
     pass
 
@@ -90,6 +91,10 @@ def cli():
     help="Force output duration in seconds (images only)",
 )
 @click.option("--invert", is_flag=True, help="Invert brightness (dark = loud)")
+@click.option("--bass-boost", default=1.0, type=float, help="Bass boost factor (1.0 = none, 2.0 = double)")
+@click.option("--lowpass", default=None, type=int, help="Lowpass filter cutoff in Hz (e.g. 8000)")
+@click.option("--highpass", default=None, type=int, help="Highpass filter cutoff in Hz (e.g. 20)")
+@click.option("--smooth", default=0, type=int, help="Smoothing window size (0 = off, try 3-11)")
 @click.option("-v", "--verbose", is_flag=True, help="Print processing info")
 def scanline(
     input,
@@ -100,6 +105,10 @@ def scanline(
     channel_mode,
     duration,
     invert,
+    bass_boost,
+    lowpass,
+    highpass,
+    smooth,
     verbose,
 ):
     """Scanline sonification mode.
@@ -108,9 +117,17 @@ def scanline(
     Brightness values become amplitude values.
 
     \b
+    Audio Processing:
+      --bass-boost  Amplify low frequencies (try 1.5-3.0)
+      --lowpass     Remove high frequencies above cutoff
+      --highpass    Remove low frequencies below cutoff
+      --smooth      Reduce harshness (try 3-11)
+
+    \b
     Examples:
       img2sound scanline photo.jpg
-      img2sound scanline video.mp4
+      img2sound scanline video.mp4 --bass-boost 2.0
+      img2sound scanline video.mp4 --lowpass 4000 --bass-boost 2.5
       img2sound scanline image.png --channel-mode stereo --direction vertical
     """
     try:
@@ -125,6 +142,14 @@ def scanline(
             click.echo(f"Direction: {direction}")
             click.echo(f"Channel mode: {channel_mode}")
             click.echo(f"Sample rate: {sample_rate} Hz")
+            if bass_boost > 1.0:
+                click.echo(f"Bass boost: {bass_boost}x")
+            if lowpass:
+                click.echo(f"Lowpass: {lowpass} Hz")
+            if highpass:
+                click.echo(f"Highpass: {highpass} Hz")
+            if smooth > 0:
+                click.echo(f"Smooth: {smooth}")
 
         if input_type == "image":
             image = load_image(input)
@@ -141,6 +166,15 @@ def scanline(
                 if verbose:
                     click.echo(f"Resampling to {duration}s")
                 audio = resample_audio(audio, target_samples)
+
+            audio = process_scanline_audio(
+                audio,
+                sample_rate,
+                bass_boost=bass_boost,
+                lowpass=lowpass,
+                highpass=highpass,
+                smooth=smooth,
+            )
         else:
             info = get_video_info(input)
             if verbose:
@@ -156,6 +190,10 @@ def scanline(
                 channel_mode=channel_mode,
                 sample_rate=sample_rate,
                 invert=invert,
+                bass_boost=bass_boost,
+                lowpass=lowpass,
+                highpass=highpass,
+                smooth=smooth,
                 progress_callback=progress.update,
             )
 
@@ -165,7 +203,26 @@ def scanline(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_wav(str(output_path), audio, sample_rate, int(bit_depth))
 
+        # Write NFO file with settings
         output_duration = len(audio) / sample_rate
+        settings = {
+            "mode": "scanline",
+            "input": input,
+            "input_type": input_type,
+            "output": str(output_path),
+            "sample_rate": f"{sample_rate} Hz",
+            "bit_depth": bit_depth,
+            "duration": f"{output_duration:.2f}s",
+            "direction": direction,
+            "channel_mode": channel_mode,
+            "invert": invert,
+            "bass_boost": bass_boost if bass_boost > 1.0 else None,
+            "lowpass": f"{lowpass} Hz" if lowpass else None,
+            "highpass": f"{highpass} Hz" if highpass else None,
+            "smooth": smooth if smooth > 0 else None,
+        }
+        write_nfo(str(output_path), settings)
+
         click.echo(f"Written {output_path} ({format_duration(output_duration)})")
 
     except Img2SoundError as e:
@@ -300,7 +357,25 @@ def spectral(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_wav(str(output_path), audio, sample_rate, int(bit_depth))
 
+        # Write NFO file with settings
         output_duration = len(audio) / sample_rate
+        settings = {
+            "mode": "spectral",
+            "input": input,
+            "input_type": input_type,
+            "output": str(output_path),
+            "sample_rate": f"{sample_rate} Hz",
+            "bit_depth": bit_depth,
+            "duration": f"{output_duration:.2f}s",
+            "freq_min": f"{freq_min} Hz",
+            "freq_max": f"{freq_max} Hz",
+            "phase": phase,
+            "griffin_iterations": griffin_iterations if phase == "griffin-lim" else None,
+            "log_freq": log_freq,
+            "bass_boost": bass_boost,
+        }
+        write_nfo(str(output_path), settings)
+
         click.echo(f"Written {output_path} ({format_duration(output_duration)})")
 
     except Img2SoundError as e:
@@ -414,7 +489,23 @@ def additive(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         write_wav(str(output_path), audio, sample_rate, int(bit_depth))
 
+        # Write NFO file with settings
         output_duration = len(audio) / sample_rate
+        settings = {
+            "mode": "additive",
+            "input": input,
+            "input_type": input_type,
+            "output": str(output_path),
+            "sample_rate": f"{sample_rate} Hz",
+            "bit_depth": bit_depth,
+            "duration": f"{output_duration:.2f}s",
+            "freq_min": f"{freq_min} Hz",
+            "freq_max": f"{freq_max} Hz",
+            "log_freq": log_freq,
+            "oscillators": oscillators,
+        }
+        write_nfo(str(output_path), settings)
+
         click.echo(f"Written {output_path} ({format_duration(output_duration)})")
 
     except Img2SoundError as e:
